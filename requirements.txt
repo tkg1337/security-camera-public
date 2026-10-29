@@ -1,0 +1,12 @@
+# 必須
+flask>=3.0
+numpy
+opencv-python
+pyyaml
+ultralytics        # YOLO。GPU を使う場合は先に CUDA 版の PyTorch を入れておく（README 参照）
+
+# プッシュ通知を使う場合
+pywebpush
+
+# パスキー認証（auth.enabled: true）を使う場合
+webauthn>=2.0

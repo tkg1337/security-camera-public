@@ -1,0 +1,40 @@
+# ---- 個人の設定・秘密情報（絶対に上げない）----
+config.yaml
+*.local.yaml
+.env
+*.pem
+*.key
+
+# ---- 実行時に作られるデータ（録画・ROI設定・通知購読・パスキーなど）----
+data/
+recordings/
+hls/
+roi_settings.json
+sensitivity.json
+subscription.json
+credentials/
+*.mp4
+*.ts
+*.m3u8
+*.part
+
+# ---- モデル・学習成果物（大きいので上げない。yolov8s.pt は自動ダウンロードされる）----
+*.pt
+*.onnx
+*.engine
+runs/
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+*.egg-info/
+
+# ---- エディタ・OS ----
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+.DS_Store

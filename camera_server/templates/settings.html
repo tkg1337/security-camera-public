@@ -1,0 +1,396 @@
+{% extends "base.html" %}
+{% block title %}設定 - 防犯カメラ{% endblock %}
+{% block head %}<script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>{% endblock %}
+{% block style %}
+    .setting-item {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 15px 0; border-bottom: 1px solid #eee; margin: 0 1em;
+    }
+    .switch { position: relative; display: inline-block; width: 45px; height: 25px; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider {
+      position: absolute; cursor: pointer; inset: 0;
+      background-color: #ccc; transition: .4s; border-radius: 25px;
+    }
+    .slider:before {
+      position: absolute; content: ""; height: 19px; width: 19px; left: 3px; bottom: 3px;
+      background-color: #fff; transition: .4s; border-radius: 50%;
+    }
+    input:checked + .slider { background-color: #2196F3; }
+    input:checked + .slider:before { transform: translateX(20px); }
+
+    .roi-controls { text-align: center; margin: 10px 0; }
+    .roi-controls button { margin: 0 .3em; }
+    #roi-coordinates { text-align: center; }
+    .roi-container {
+      position: relative; width: 100%; max-width: 640px; margin: 20px auto;
+      background-color: #000; overflow: hidden; aspect-ratio: {{ frame_w }} / {{ frame_h }}; border-radius: 8px;
+    }
+    .roi-container video { width: 100%; height: 100%; object-fit: contain; }
+    .roi-overlay {
+      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+      border: 2px dashed #007bff; background-color: rgba(0, 123, 255, .2);
+      z-index: 2; cursor: move; touch-action: none;
+    }
+
+    html.dark-mode .slider { background-color: #555; }
+    html.dark-mode .setting-item { border-bottom-color: #333; }
+
+    .sens-group { margin: 0 1em 1.5em; }
+    .sens-row {
+      display: flex; align-items: center; gap: 0.7em;
+      padding: 0.6em 0; border-bottom: 1px solid #eee; flex-wrap: wrap;
+    }
+    .sens-row label { flex: 1 1 140px; font-size: 0.95em; }
+    .sens-row input[type=range] { flex: 2 1 140px; accent-color: #2196F3; }
+    .sens-val { min-width: 2.8em; text-align: right; font-weight: bold; font-size: 0.9em; }
+    html.dark-mode .sens-row { border-bottom-color: #333; }
+{% endblock %}
+{% block content %}
+  <h1>設定</h1>
+
+  <div class="setting-item">
+    <span>ダークモード</span>
+    <label class="switch">
+      <input type="checkbox" id="darkModeToggle">
+      <span class="slider"></span>
+    </label>
+  </div>
+
+  {% if is_admin %}
+  <h2>検知感度設定</h2>
+  <div class="sens-group">
+    <div class="sens-row">
+      <label>YOLO 信頼度<br><small>低いほど検知しやすい・誤検知も増える</small></label>
+      <input type="range" id="confSlider" min="0.05" max="0.90" step="0.05" value="0.35">
+      <span class="sens-val" id="confVal">0.35</span>
+    </div>
+    <div class="sens-row">
+      <label>人の動き閾値<br><small>低いほど微細な動きで反応</small></label>
+      <input type="range" id="personThreshSlider" min="1" max="80" step="1" value="10">
+      <span class="sens-val" id="personThreshVal">10</span>
+    </div>
+    <div class="sens-row">
+      <label>車の動き閾値<br><small>低いほど微細な動きで反応</small></label>
+      <input type="range" id="carThreshSlider" min="1" max="80" step="1" value="30">
+      <span class="sens-val" id="carThreshVal">30</span>
+    </div>
+    <div style="text-align:right; margin-top:0.8em;">
+      <button id="saveSensBtn" class="btn-success">感度を保存</button>
+    </div>
+  </div>
+
+  <h2>録画領域設定</h2>
+  {% if not hls_enabled %}
+  <p class="center note">ライブ配信がオフなので背景は黒くなります（枠の位置は保存できます）。</p>
+  {% endif %}
+  <div class="roi-controls">
+    <button id="reloadLiveStreamBtn" class="btn-secondary">ライブストリームをリロード</button>
+  </div>
+  <div class="roi-container" id="roiContainer">
+    <video id="liveStreamVideo" playsinline muted autoplay></video>
+    <div id="roiOverlay" class="roi-overlay"></div>
+  </div>
+  <div class="roi-controls">
+    <button id="saveRoiBtn" class="btn-success">保存</button>
+    <button id="resetRoiBtn" class="btn-warning">リセット</button>
+  </div>
+  <div id="roi-coordinates">
+    ROI: X:<span id="roiXMin">0</span>, Y:<span id="roiYMin">0</span>,
+    W:<span id="roiWidth">0</span>, H:<span id="roiHeight">0</span>
+  </div>
+  {% else %}
+  <p class="center" style="margin-top: 50px;">このコンテンツを変更するには管理者ログインが必要です。</p>
+  <div class="center" style="margin-top: 20px;">
+    <button class="btn-primary" onclick="openLoginModal()">管理者ログイン</button>
+  </div>
+  {% endif %}
+{% endblock %}
+{% block scripts %}
+  <script>
+    const darkModeToggle = document.getElementById('darkModeToggle');
+    const roiContainer = document.getElementById('roiContainer');
+    const liveStreamVideo = document.getElementById('liveStreamVideo');
+    const roiOverlay = document.getElementById('roiOverlay');
+    const saveRoiBtn = document.getElementById('saveRoiBtn');
+    const resetRoiBtn = document.getElementById('resetRoiBtn');
+    const reloadLiveStreamBtn = document.getElementById('reloadLiveStreamBtn');
+    const roiXMinSpan = document.getElementById('roiXMin');
+    const roiYMinSpan = document.getElementById('roiYMin');
+    const roiWidthSpan = document.getElementById('roiWidth');
+    const roiHeightSpan = document.getElementById('roiHeight');
+
+    const ACTUAL_CAMERA_WIDTH = {{ frame_w }};
+    const ACTUAL_CAMERA_HEIGHT = {{ frame_h }};
+    const RESIZE_HANDLE_SIZE = 20;
+
+    let isResizing = false, isDragging = false;
+    let startX, startY, startRoiX, startRoiY, startRoiWidth, startRoiHeight;
+    let activeResizeHandle = '';
+    let hls = null;
+
+    // ---- ダークモード ----
+    function storeDarkMode(value) { try { localStorage.setItem('darkMode', value); } catch (e) {} }
+    function hasStoredDarkMode() { try { return !!localStorage.getItem('darkMode'); } catch (e) { return false; } }
+
+    darkModeToggle.checked = document.documentElement.classList.contains('dark-mode');
+    darkModeToggle.addEventListener('change', () => {
+      document.documentElement.classList.toggle('dark-mode', darkModeToggle.checked);
+      storeDarkMode(darkModeToggle.checked ? 'enabled' : 'disabled');
+    });
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', event => {
+      if (!hasStoredDarkMode()) {
+        document.documentElement.classList.toggle('dark-mode', event.matches);
+        darkModeToggle.checked = event.matches;
+      }
+    });
+
+    // ---- ライブストリーム ----
+    function loadLiveStream() {
+      if (window.Hls && Hls.isSupported()) {
+        if (hls) hls.destroy();
+        hls = new Hls();
+        hls.loadSource('/hls/live.m3u8');
+        hls.attachMedia(liveStreamVideo);
+        hls.on(Hls.Events.MANIFEST_PARSED, () => liveStreamVideo.play().catch(() => {}));
+        hls.on(Hls.Events.ERROR, (event, data) => console.error('HLS.js error:', data));
+      } else if (liveStreamVideo.canPlayType('application/vnd.apple.mpegurl')) {
+        liveStreamVideo.src = '/hls/live.m3u8';
+        liveStreamVideo.addEventListener('loadedmetadata', () => liveStreamVideo.play());
+      } else {
+        alert('お使いのブラウザはHLSライブストリームをサポートしていません。');
+      }
+    }
+
+    // ---- ROI ----
+    async function loadRoi() {
+      try {
+        const response = await fetch('/api/roi_settings');
+        if (!response.ok) { console.warn('ROI設定を取得できませんでした:', response.status); resetRoi(); return; }
+        const s = await response.json();
+        const scaleX = liveStreamVideo.offsetWidth / ACTUAL_CAMERA_WIDTH;
+        const scaleY = liveStreamVideo.offsetHeight / ACTUAL_CAMERA_HEIGHT;
+        setRoiPosition(s.ROI_X_MIN * scaleX, s.ROI_Y_MIN * scaleY,
+                       (s.ROI_X_MAX - s.ROI_X_MIN) * scaleX, (s.ROI_Y_MAX - s.ROI_Y_MIN) * scaleY);
+        roiOverlay.style.display = 'block';
+      } catch (error) {
+        console.error('ROI設定の読み込みエラー:', error);
+        resetRoi();
+      }
+    }
+
+    function setRoiPosition(x, y, width, height) {
+      const cw = liveStreamVideo.offsetWidth, ch = liveStreamVideo.offsetHeight;
+      x = Math.max(0, Math.min(x, cw - 10));
+      y = Math.max(0, Math.min(y, ch - 10));
+      width = Math.max(10, Math.min(width, cw - x));
+      height = Math.max(10, Math.min(height, ch - y));
+      roiOverlay.style.left = `${x}px`;
+      roiOverlay.style.top = `${y}px`;
+      roiOverlay.style.width = `${width}px`;
+      roiOverlay.style.height = `${height}px`;
+      updateRoiCoordinates();
+    }
+
+    function currentRoiInCamera() {
+      const scaleX = ACTUAL_CAMERA_WIDTH / liveStreamVideo.offsetWidth;
+      const scaleY = ACTUAL_CAMERA_HEIGHT / liveStreamVideo.offsetHeight;
+      const x = parseInt(roiOverlay.style.left, 10), y = parseInt(roiOverlay.style.top, 10);
+      const w = parseInt(roiOverlay.style.width, 10), h = parseInt(roiOverlay.style.height, 10);
+      return { x: x * scaleX, y: y * scaleY, w: w * scaleX, h: h * scaleY };
+    }
+
+    function updateRoiCoordinates() {
+      const r = currentRoiInCamera();
+      roiXMinSpan.textContent = Math.round(r.x);
+      roiYMinSpan.textContent = Math.round(r.y);
+      roiWidthSpan.textContent = Math.round(r.w);
+      roiHeightSpan.textContent = Math.round(r.h);
+    }
+
+    async function saveRoi() {
+      const r = currentRoiInCamera();
+      const data = {
+        ROI_X_MIN: Math.round(r.x), ROI_Y_MIN: Math.round(r.y),
+        ROI_X_MAX: Math.round(r.x + r.w), ROI_Y_MAX: Math.round(r.y + r.h)
+      };
+      try {
+        const response = await fetch('/api/roi_settings', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data)
+        });
+        const result = await response.json();
+        alert(response.ok ? 'ROI設定を保存しました！' : 'ROI設定の保存に失敗しました: ' + (result.message || result.error));
+      } catch (error) {
+        console.error('ROI保存エラー:', error);
+        alert('ROI設定の保存中にエラーが発生しました。');
+      }
+    }
+
+    function resetRoi() {
+      setRoiPosition(0, 0, liveStreamVideo.offsetWidth, liveStreamVideo.offsetHeight);
+      roiOverlay.style.display = 'block';
+    }
+
+    // ---- ドラッグ・リサイズ ----
+    function getClientCoords(e) {
+      const rect = roiContainer.getBoundingClientRect();
+      const p = e.type.startsWith('touch') ? e.touches[0] : e;
+      return { x: p.clientX - rect.left, y: p.clientY - rect.top };
+    }
+
+    function edgeAt(coords) {
+      const x = roiOverlay.offsetLeft, y = roiOverlay.offsetTop;
+      const w = roiOverlay.offsetWidth, h = roiOverlay.offsetHeight;
+      const left = coords.x - x, right = (x + w) - coords.x, top = coords.y - y, bottom = (y + h) - coords.y;
+      const S = RESIZE_HANDLE_SIZE;
+      if (top < S && left < S) return 'nw';
+      if (top < S && right < S) return 'ne';
+      if (bottom < S && left < S) return 'sw';
+      if (bottom < S && right < S) return 'se';
+      if (top < S) return 'n';
+      if (bottom < S) return 's';
+      if (left < S) return 'w';
+      if (right < S) return 'e';
+      return '';
+    }
+
+    function setResizeCursor(direction) {
+      roiOverlay.style.cursor = direction ? `${direction}-resize` : 'move';
+    }
+
+    function startDragOrResize(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      const coords = getClientCoords(e);
+      activeResizeHandle = edgeAt(coords);
+      isResizing = !!activeResizeHandle;
+      isDragging = !isResizing;
+      setResizeCursor(activeResizeHandle);
+
+      startX = coords.x; startY = coords.y;
+      startRoiX = roiOverlay.offsetLeft; startRoiY = roiOverlay.offsetTop;
+      startRoiWidth = roiOverlay.offsetWidth; startRoiHeight = roiOverlay.offsetHeight;
+
+      document.addEventListener('mousemove', doDragOrResize);
+      document.addEventListener('mouseup', stopDragOrResize);
+      document.addEventListener('touchmove', doDragOrResize, { passive: false });
+      document.addEventListener('touchend', stopDragOrResize);
+      document.addEventListener('touchcancel', stopDragOrResize);
+    }
+
+    function doDragOrResize(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      const coords = getClientCoords(e);
+      const dx = coords.x - startX, dy = coords.y - startY;
+      const minSize = 10;
+      const cw = liveStreamVideo.offsetWidth, ch = liveStreamVideo.offsetHeight;
+      let left = startRoiX, top = startRoiY, width = startRoiWidth, height = startRoiHeight;
+
+      if (isDragging) {
+        left = Math.max(0, Math.min(startRoiX + dx, cw - width));
+        top = Math.max(0, Math.min(startRoiY + dy, ch - height));
+      } else if (isResizing) {
+        const h = activeResizeHandle;
+        if (h.includes('w')) {   // 左辺を動かす
+          left = Math.max(0, Math.min(startRoiX + dx, startRoiX + startRoiWidth - minSize));
+          width = startRoiX + startRoiWidth - left;
+        }
+        if (h.includes('e')) {   // 右辺を動かす
+          width = Math.max(minSize, Math.min(startRoiWidth + dx, cw - left));
+        }
+        if (h.includes('n')) {   // 上辺を動かす
+          top = Math.max(0, Math.min(startRoiY + dy, startRoiY + startRoiHeight - minSize));
+          height = startRoiY + startRoiHeight - top;
+        }
+        if (h.includes('s')) {   // 下辺を動かす
+          height = Math.max(minSize, Math.min(startRoiHeight + dy, ch - top));
+        }
+      }
+      roiOverlay.style.left = `${left}px`;
+      roiOverlay.style.top = `${top}px`;
+      roiOverlay.style.width = `${width}px`;
+      roiOverlay.style.height = `${height}px`;
+      updateRoiCoordinates();
+    }
+
+    function stopDragOrResize() {
+      isDragging = isResizing = false;
+      activeResizeHandle = '';
+      setResizeCursor('');
+      document.removeEventListener('mousemove', doDragOrResize);
+      document.removeEventListener('mouseup', stopDragOrResize);
+      document.removeEventListener('touchmove', doDragOrResize);
+      document.removeEventListener('touchend', stopDragOrResize);
+      document.removeEventListener('touchcancel', stopDragOrResize);
+      updateRoiCoordinates();
+    }
+
+    // ---- 感度設定 ----
+    (async () => {
+      const confSlider       = document.getElementById('confSlider');
+      const personSlider     = document.getElementById('personThreshSlider');
+      const carSlider        = document.getElementById('carThreshSlider');
+      const confVal          = document.getElementById('confVal');
+      const personVal        = document.getElementById('personThreshVal');
+      const carVal           = document.getElementById('carThreshVal');
+      const saveSensBtn      = document.getElementById('saveSensBtn');
+      if (!confSlider) return;  // 管理者でないとき
+
+      // 現在値をサーバーから取得して反映
+      try {
+        const res = await fetch('/api/sensitivity_settings');
+        if (res.ok) {
+          const d = await res.json();
+          confSlider.value   = d.conf;          confVal.textContent   = parseFloat(d.conf).toFixed(2);
+          personSlider.value = d.person_thresh; personVal.textContent = d.person_thresh;
+          carSlider.value    = d.car_thresh;    carVal.textContent    = d.car_thresh;
+        }
+      } catch (e) {}
+
+      confSlider.addEventListener('input',   () => { confVal.textContent   = parseFloat(confSlider.value).toFixed(2); });
+      personSlider.addEventListener('input', () => { personVal.textContent = personSlider.value; });
+      carSlider.addEventListener('input',    () => { carVal.textContent    = carSlider.value; });
+
+      saveSensBtn.addEventListener('click', async () => {
+        saveSensBtn.disabled = true;
+        try {
+          const res = await fetch('/api/sensitivity_settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              conf:          parseFloat(confSlider.value),
+              person_thresh: parseInt(personSlider.value, 10),
+              car_thresh:    parseInt(carSlider.value, 10),
+            }),
+          });
+          alert(res.ok ? '感度設定を保存しました。' : '保存に失敗しました。');
+        } catch (e) {
+          alert('通信エラーが発生しました。');
+        } finally {
+          saveSensBtn.disabled = false;
+        }
+      });
+    })();
+
+    document.addEventListener('DOMContentLoaded', () => {
+      if (!(roiContainer && liveStreamVideo && roiOverlay)) return;   // 管理者でないときは何もしない
+      {% if hls_enabled %}loadLiveStream();{% endif %}
+      liveStreamVideo.addEventListener('loadedmetadata', () => {
+        if (liveStreamVideo.offsetWidth === 0 || liveStreamVideo.offsetHeight === 0) setTimeout(loadRoi, 500);
+        else loadRoi();
+      });
+      // ライブ映像が来なくても ROI の枠は出しておく
+      loadRoi();
+      roiOverlay.addEventListener('mousemove', e => {
+        if (!isDragging && !isResizing) setResizeCursor(edgeAt(getClientCoords(e)));
+      });
+      roiOverlay.addEventListener('mouseleave', () => { if (!isDragging && !isResizing) setResizeCursor(''); });
+      roiOverlay.addEventListener('mousedown', startDragOrResize);
+      roiOverlay.addEventListener('touchstart', startDragOrResize, { passive: false });
+      saveRoiBtn.addEventListener('click', saveRoi);
+      resetRoiBtn.addEventListener('click', resetRoi);
+      reloadLiveStreamBtn.addEventListener('click', loadLiveStream);
+    });
+  </script>
+{% endblock %}

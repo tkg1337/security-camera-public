@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>{% block title %}防犯カメラ{% endblock %}</title>
+  <script>
+    // ダークモード設定を描画前に適用（チラつき防止）
+    (function () {
+      var saved = null;
+      try { saved = localStorage.getItem('darkMode'); } catch (e) {}
+      if (saved === 'enabled' || (saved !== 'disabled' && window.matchMedia &&
+          window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+        document.documentElement.classList.add('dark-mode');
+      }
+    })();
+  </script>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#222">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" href="/static/icons/icon-192.png">
+  {% block head %}{% endblock %}
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background-color: #fff; color: #000;
+      font-size: 16px; line-height: 1.6;
+      margin: 0; padding: 1em 1em 80px;
+      transition: background-color .3s ease, color .3s ease;
+    }
+    h1, h2 { text-align: center; margin: .5em 0 1em; }
+    .center { text-align: center; }
+    .note { font-size: .9em; color: #666; }
+    button {
+      padding: .6em 1.2em; font-size: 1em; border-radius: 8px;
+      border: 1px solid #ccc; background: #f2f2f2; color: #000; cursor: pointer;
+    }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    .btn-primary { background: #007bff; color: #fff; border: none; }
+    .btn-primary:hover { background: #0056b3; }
+    .btn-success { background: #28a745; color: #fff; border: none; }
+    .btn-success:hover { background: #218838; }
+    .btn-danger { background: #dc3545; color: #fff; border: none; }
+    .btn-danger:hover { background: #b52a37; }
+    .btn-warning { background: #ffc107; color: #000; border: none; }
+    .btn-secondary { background: #6c757d; color: #fff; border: none; }
+
+    .test-banner {
+      background: #fff3cd; color: #664d03; border: 1px solid #ffe69c;
+      border-radius: 8px; padding: .5em 1em; margin-bottom: 1em;
+      text-align: center; font-size: .9em;
+    }
+
+    .modal-bg {
+      display: none; position: fixed; inset: 0; z-index: 10000;
+      background: rgba(0, 0, 0, .7); justify-content: center; align-items: center;
+    }
+    .modal-box {
+      position: relative; background: #fff; padding: 2em; border-radius: 8px;
+      text-align: center; width: 90%; max-width: 400px;
+    }
+    .modal-x { position: absolute; top: 10px; right: 15px; font-size: 24px; cursor: pointer; }
+    .modal-box input { width: 100%; padding: .8em; margin: .5em 0; border: 1px solid #ccc; border-radius: 5px; }
+
+    .bottom-nav {
+      position: fixed; bottom: 0; left: 0; width: 100%; height: 60px;
+      background-color: #fff; border-top: 1px solid #ccc;
+      display: flex; justify-content: space-around; align-items: center;
+      z-index: 9999; box-shadow: 0 -1px 5px rgba(0, 0, 0, .1);
+      -webkit-user-select: none; user-select: none;
+    }
+    .bottom-nav .nav-item {
+      flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+      color: #333; text-decoration: none; font-size: 20px; line-height: 1.2;
+    }
+    .bottom-nav .nav-item span { font-size: 13px; margin-top: 2px; }
+    .bottom-nav .nav-item.active { color: #007bff; font-weight: bold; }
+
+    html.dark-mode body { background-color: #1a1a1a; color: #f0f0f0; }
+    html.dark-mode .note { color: #aaa; }
+    html.dark-mode button:not([class*="btn-"]) { background: #555; color: #f0f0f0; border-color: #555; }
+    html.dark-mode .bottom-nav { background-color: #555; border-top-color: #555; }
+    html.dark-mode .bottom-nav .nav-item { color: #fff; }
+    html.dark-mode .bottom-nav .nav-item.active { color: #8ec5ff; }
+    html.dark-mode .modal-box { background-color: #2a2a2a; color: #f0f0f0; }
+    html.dark-mode .modal-box input { background: #333; border-color: #555; color: #f0f0f0; }
+    html.dark-mode .test-banner { background: #3a3000; color: #ffe69c; border-color: #665c00; }
+    {% block style %}{% endblock %}
+  </style>
+</head>
+<body>
+  {% if not auth_enabled %}
+  <div class="test-banner">🧪 テストモード：パスキー認証オフ（ログインなしで管理者として表示しています）</div>
+  {% endif %}
+
+  {% block content %}{% endblock %}
+
+  {% if auth_enabled and not is_admin %}
+  <div class="modal-bg" id="adminLoginModal">
+    <div class="modal-box">
+      <span class="modal-x" onclick="closeLoginModal()">&times;</span>
+      <h2>管理者ログイン</h2>
+      <form onsubmit="event.preventDefault(); loginAdmin();" autocomplete="on">
+        <input type="text" id="loginUsername" placeholder="ユーザー名" required autocomplete="username">
+        <button type="submit" class="btn-primary">パスキーでログイン</button>
+      </form>
+    </div>
+  </div>
+  <div class="modal-bg" id="adminRegisterModal">
+    <div class="modal-box">
+      <span class="modal-x" onclick="closeRegisterModal()">&times;</span>
+      <h2>管理者パスキー登録</h2>
+      <form onsubmit="event.preventDefault(); registerAdmin();" autocomplete="off">
+        <input type="text" id="registerUsername" placeholder="ユーザー名" required>
+        <input type="password" id="registerPassword" placeholder="招待コード" required>
+        <button type="submit" class="btn-success">パスキーを登録</button>
+      </form>
+    </div>
+  </div>
+  {% endif %}
+
+  <nav class="bottom-nav">
+    <a href="/" class="nav-item {% if request.path == '/' %}active{% endif %}">🏠<span>ホーム</span></a>
+    <a href="/records" class="nav-item {% if request.path.startswith('/records') %}active{% endif %}">📁<span>録画一覧</span></a>
+    <a href="/settings" class="nav-item {% if request.path.startswith('/settings') %}active{% endif %}">⚙️<span>設定</span></a>
+  </nav>
+
+  {% if auth_enabled %}
+  <script>
+    // ---- パスキー（WebAuthn） ----
+    function base64urlToUint8Array(base64url) {
+      const padding = '='.repeat((4 - base64url.length % 4) % 4);
+      const base64 = (base64url + padding).replace(/-/g, '+').replace(/_/g, '/');
+      const raw = window.atob(base64);
+      const out = new Uint8Array(raw.length);
+      for (let i = 0; i < raw.length; ++i) out[i] = raw.charCodeAt(i);
+      return out;
+    }
+    function uint8ArrayToBase64url(arr) {
+      return window.btoa(String.fromCharCode(...arr)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+    }
+    function openLoginModal() { document.getElementById('adminLoginModal').style.display = 'flex'; }
+    function closeLoginModal() { const m = document.getElementById('adminLoginModal'); if (m) m.style.display = 'none'; }
+    function openRegisterModal() { document.getElementById('adminRegisterModal').style.display = 'flex'; }
+    function closeRegisterModal() { const m = document.getElementById('adminRegisterModal'); if (m) m.style.display = 'none'; }
+
+    document.querySelectorAll('.modal-bg').forEach(m => {
+      m.addEventListener('click', e => { if (e.target === m) m.style.display = 'none'; });
+    });
+    window.addEventListener('keydown', e => {
+      if (e.key === 'Escape') { closeLoginModal(); closeRegisterModal(); }
+    });
+
+    async function loginAdmin() {
+      const username = document.getElementById('loginUsername').value;
+      try {
+        const res = await fetch('/login/options', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username })
+        });
+        const options = await res.json();
+        if (options.error) { alert('ログインオプションの取得に失敗しました: ' + options.error); return; }
+        options.challenge = base64urlToUint8Array(options.challenge);
+        if (options.allowCredentials) options.allowCredentials.forEach(c => c.id = base64urlToUint8Array(c.id));
+
+        const credential = await navigator.credentials.get({ publicKey: options });
+        const verRes = await fetch('/login', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: credential.id,
+            rawId: uint8ArrayToBase64url(new Uint8Array(credential.rawId)),
+            type: credential.type,
+            response: {
+              clientDataJSON: uint8ArrayToBase64url(new Uint8Array(credential.response.clientDataJSON)),
+              authenticatorData: uint8ArrayToBase64url(new Uint8Array(credential.response.authenticatorData)),
+              signature: uint8ArrayToBase64url(new Uint8Array(credential.response.signature)),
+              userHandle: credential.response.userHandle
+                ? uint8ArrayToBase64url(new Uint8Array(credential.response.userHandle)) : null,
+            },
+            authenticatorAttachment: credential.authenticatorAttachment
+          })
+        });
+        if (verRes.ok) window.location.reload();
+        else alert(await verRes.text());
+      } catch (e) {
+        console.error(e);
+        alert('ログイン中にエラーが発生しました: ' + e.message);
+      }
+    }
+
+    async function registerAdmin() {
+      const username = document.getElementById('registerUsername').value;
+      const password = document.getElementById('registerPassword').value;
+      try {
+        const res = await fetch('/register/options', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password })
+        });
+        const options = await res.json();
+        if (options.error) { alert('登録オプションの取得に失敗しました: ' + options.error); return; }
+        options.challenge = base64urlToUint8Array(options.challenge);
+        options.user.id = base64urlToUint8Array(options.user.id);
+        if (options.excludeCredentials) options.excludeCredentials.forEach(c => c.id = base64urlToUint8Array(c.id));
+
+        const credential = await navigator.credentials.create({ publicKey: options });
+        const verRes = await fetch('/register', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: credential.id,
+            rawId: uint8ArrayToBase64url(new Uint8Array(credential.rawId)),
+            type: credential.type,
+            response: {
+              clientDataJSON: uint8ArrayToBase64url(new Uint8Array(credential.response.clientDataJSON)),
+              attestationObject: uint8ArrayToBase64url(new Uint8Array(credential.response.attestationObject))
+            },
+            authenticatorAttachment: credential.authenticatorAttachment
+          })
+        });
+        alert(await verRes.text());
+        if (verRes.ok) window.location.reload();
+      } catch (e) {
+        console.error(e);
+        alert('登録中にエラーが発生しました: ' + e.message);
+      }
+    }
+  </script>
+  {% endif %}
+  {% block scripts %}{% endblock %}
+</body>
+</html>

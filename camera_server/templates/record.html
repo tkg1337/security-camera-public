@@ -1,0 +1,193 @@
+{% extends "base.html" %}
+{% block title %}録画一覧 - 防犯カメラ{% endblock %}
+{% block style %}
+    .toolbar { text-align: right; margin: 1.5em 0; }
+    .date-form { display: flex; justify-content: center; margin: 1em 0; }
+    .date-form form {
+      display: flex; gap: 1em; flex-wrap: wrap; justify-content: center; align-items: center;
+      width: 100%; max-width: 600px; margin: 0 auto;
+    }
+    .form-item { display: flex; align-items: center; gap: .5em; flex: 1 1 200px; }
+    .form-item input, .form-item select {
+      flex: 1; padding: .5em; font-size: 1em; border: 1px solid #aaa; border-radius: 5px; min-width: 140px;
+    }
+    .thumbnail-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 1em; margin-top: 2em;
+    }
+    .thumbnail-item { background: #fff; border: 1px solid #ccc; padding: .5em; border-radius: 8px; text-align: center; }
+    .thumbnail { max-width: 100%; height: auto; border: 1px solid #aaa; cursor: pointer; }
+    .admin-controls { display: none; position: relative; height: 2.5em; margin-top: 10px; }
+    .edit-mode .admin-controls { display: block; }
+    .admin-controls form { position: absolute; right: 0; bottom: 0; }
+
+    .video-modal {
+      display: none; position: fixed; inset: 0; z-index: 9999; background: rgba(0, 0, 0, .7);
+    }
+    .video-box {
+      position: relative; background: #fff; margin: 5% auto; width: 95%; max-width: 1100px;
+      border-radius: 8px; padding: 1em;
+    }
+    .dual-video-container { display: flex; gap: 0.75em; flex-wrap: wrap; }
+    .video-pane { flex: 1 1 45%; min-width: 220px; display: flex; flex-direction: column; }
+    .video-label {
+      font-size: 0.85em; font-weight: bold; text-align: center; margin-bottom: 0.3em;
+      padding: 0.2em 0.5em; background: #f0f0f0; border-radius: 4px;
+    }
+    .video-pane video { width: 100%; height: auto; display: block; }
+    .video-dl-link { display: block; margin-top: 0.5em; text-align: center; color: #007bff; text-decoration: underline; font-size: 0.9em; }
+
+    html.dark-mode .thumbnail-item { background: #1a1a1a; border-color: #444; }
+    html.dark-mode .thumbnail { border-color: #555; }
+    html.dark-mode .video-box { background-color: #2a2a2a; color: #f0f0f0; }
+    html.dark-mode .video-label { background: #3a3a3a; color: #f0f0f0; }
+    html.dark-mode .form-item input, html.dark-mode .form-item select { background: #333; color: #f0f0f0; border-color: #555; }
+{% endblock %}
+{% block content %}
+  {% if is_admin %}
+  <h1>録画ファイル一覧</h1>
+  <div class="toolbar">
+    <button id="toggleEdit">✏️ 編集</button>
+    {% if auth_enabled %}
+    <button class="btn-danger" onclick="location.href='/logout'">ログアウト</button>
+    {% endif %}
+  </div>
+
+  <div class="date-form">
+    <form method="get" action="/records" id="filterForm">
+      <div class="form-item">
+        <label for="date">日付：</label>
+        <input type="date" id="date" name="date" value="{{ date_str }}">
+      </div>
+      <div class="form-item">
+        <label for="category">カテゴリ：</label>
+        <select id="category" name="category">
+          <option value="all" {% if category == 'all' %}selected{% endif %}>すべて</option>
+          <option value="person" {% if category == 'person' %}selected{% endif %}>人物</option>
+          <option value="car" {% if category == 'car' %}selected{% endif %}>車両</option>
+        </select>
+      </div>
+    </form>
+  </div>
+
+  <div class="thumbnail-grid">
+    {% for item in videos %}
+    <div class="thumbnail-item">
+      {% set time_str = item.filename[16:22] %}
+      <strong>{{ time_str[:2] }}時{{ time_str[2:4] }}分{{ time_str[4:6] }}秒</strong><br>
+      <img class="thumbnail" src="/thumbnails/{{ item.category }}/{{ item.thumbnail }}" loading="lazy"
+           onclick="openVideoModal('/videos/{{ item.category }}/{{ item.filename }}')">
+      <div class="admin-controls">
+        <form method="POST" action="/delete_record/{{ item.category }}/{{ item.filename }}"
+              onsubmit="return confirm('本当に削除しますか？');">
+          <button type="submit" class="btn-danger">削除</button>
+        </form>
+      </div>
+    </div>
+    {% else %}
+    <p>該当する録画が見つかりませんでした。</p>
+    {% endfor %}
+  </div>
+
+  <div class="video-modal" id="videoModal">
+    <div class="video-box">
+      <span class="modal-x" onclick="closeVideoModal()">&times;</span>
+      <div class="dual-video-container">
+        <div class="video-pane">
+          <div class="video-label">📷 固定カメラ</div>
+          <video id="modal-video" controls autoplay playsinline></video>
+          <a id="download-link" class="video-dl-link" href="#" download>ダウンロード</a>
+        </div>
+        <div class="video-pane" id="cam2-pane" style="display:none;">
+          <div class="video-label">📷 サブカメラ</div>
+          <video id="modal-video-cam2" controls autoplay playsinline></video>
+          <a id="download-link-cam2" class="video-dl-link" href="#" download>ダウンロード</a>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% else %}
+  <p class="center" style="margin-top: 50px;">このコンテンツを表示するには管理者ログインが必要です。</p>
+  <div class="center" style="margin-top: 20px;">
+    <button class="btn-primary" onclick="openLoginModal()">管理者ログイン</button>
+  </div>
+  {% endif %}
+
+  <div id="blocker" style="display: none; position: fixed; inset: 0; z-index: 10000; background: transparent;"></div>
+{% endblock %}
+{% block scripts %}
+  <script>
+    function openVideoModal(videoUrl) {
+      const modal   = document.getElementById('videoModal');
+      const video1  = document.getElementById('modal-video');
+      const video2  = document.getElementById('modal-video-cam2');
+      const pane2   = document.getElementById('cam2-pane');
+      const dl1     = document.getElementById('download-link');
+      const dl2     = document.getElementById('download-link-cam2');
+
+      const cam2Url = videoUrl.replace(/\.mp4$/, '_cam2.mp4');
+
+      // ── ユーザー操作コンテキスト内で両方 src をセット・play() を呼ぶ ──
+      // (fetch コールバック内だと autoplay ポリシーで2本目がブロックされるため)
+      video1.src = videoUrl;
+      dl1.href   = videoUrl;
+      video2.src = cam2Url;
+      dl2.href   = cam2Url;
+      pane2.style.display = '';   // 先に表示してから存在確認
+
+      modal.style.display = 'block';
+      video1.play().catch(() => {});
+      video2.play().catch(() => {});
+
+      // HEAD チェック：cam2 ファイルが無ければペインを隠して停止
+      fetch(cam2Url, { method: 'HEAD' })
+        .then(res => {
+          if (!res.ok) {
+            pane2.style.display = 'none';
+            video2.pause();
+            video2.removeAttribute('src');
+            video2.load();
+          }
+        })
+        .catch(() => {
+          pane2.style.display = 'none';
+          video2.pause();
+          video2.removeAttribute('src');
+          video2.load();
+        });
+    }
+
+    function closeVideoModal() {
+      const modal  = document.getElementById('videoModal');
+      if (!modal || modal.style.display !== 'block') return;
+      const video1 = document.getElementById('modal-video');
+      const video2 = document.getElementById('modal-video-cam2');
+      [video1, video2].forEach(v => { v.pause(); v.removeAttribute('src'); v.load(); });
+      document.getElementById('cam2-pane').style.display = 'none';
+      modal.style.display = 'none';
+      // 閉じた直後のタップが下のサムネイルに当たらないようにする
+      const blocker = document.getElementById('blocker');
+      blocker.style.display = 'block';
+      setTimeout(() => { blocker.style.display = 'none'; }, 300);
+    }
+
+    window.addEventListener('click', e => { if (e.target === document.getElementById('videoModal')) closeVideoModal(); });
+    window.addEventListener('touchstart', e => { if (e.target === document.getElementById('videoModal')) closeVideoModal(); });
+    window.addEventListener('keydown', e => { if (e.key === 'Escape') closeVideoModal(); });
+
+    const dateInput = document.getElementById('date');
+    const categorySelect = document.getElementById('category');
+    if (dateInput && categorySelect) {
+      [dateInput, categorySelect].forEach(el => el.addEventListener('change', () => {
+        document.getElementById('filterForm').submit();
+      }));
+    }
+
+    const toggleBtn = document.getElementById('toggleEdit');
+    if (toggleBtn) {
+      toggleBtn.addEventListener('click', () => {
+        document.body.classList.toggle('edit-mode');
+        toggleBtn.textContent = document.body.classList.contains('edit-mode') ? '✅ 完了' : '✏️ 編集';
+      });
+    }
+  </script>
+{% endblock %}

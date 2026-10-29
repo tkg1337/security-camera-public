@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}ホーム - 防犯カメラ{% endblock %}
+{% block head %}<script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>{% endblock %}
+{% block style %}
+    #live-video { display: block; width: 100%; max-width: 640px; height: auto; margin: 0 auto; background: #000; }
+    .account-bar { text-align: right; margin: 1em; }
+{% endblock %}
+{% block content %}
+  <h1>ホーム</h1>
+
+  {% if auth_enabled %}
+  <div class="account-bar">
+    {% if is_admin %}
+    <p style="font-weight: bold; margin-bottom: 5px;">管理者としてログイン中</p>
+    <button class="btn-danger" onclick="location.href='/logout'">ログアウト</button>
+    {% else %}
+    <button onclick="openLoginModal()">管理者ログイン</button>
+    <button class="btn-success" onclick="openRegisterModal()">管理者登録</button>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {% if is_admin %}
+  <h2>ライブビュー</h2>
+  {% if hls_enabled %}
+  <video id="live-video" playsinline muted autoplay controls></video>
+  {% else %}
+  <p class="center note">ライブ配信はオフです（config.yaml の live.hls_enabled を true にすると表示されます）。</p>
+  {% endif %}
+  <div class="center" style="margin-top: 20px;">
+    {% if vapid_public_key %}
+    <button id="subscribeBtn">通知を許可する</button>
+    <p id="subscribeNote" class="note"></p>
+    {% else %}
+    <p class="note">プッシュ通知は未設定です（config.yaml の notifications に VAPID 鍵を設定すると使えます）。</p>
+    {% endif %}
+  </div>
+  {% else %}
+  <p class="center" style="margin-top: 50px;">ライブビューを表示するには管理者ログインが必要です。</p>
+  {% endif %}
+{% endblock %}
+{% block scripts %}
+  <script>
+    function loadLiveStream() {
+      const video = document.getElementById('live-video');
+      if (!video) return;
+      if (window.Hls && Hls.isSupported()) {
+        const hls = new Hls();
+        hls.loadSource('/hls/live.m3u8');
+        hls.attachMedia(video);
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          video.play().catch(e => console.warn('再生がブロックされました:', e));
+        });
+        hls.on(Hls.Events.ERROR, (event, data) => { if (data.fatal) console.error('HLSエラー:', data); });
+      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        video.src = '/hls/live.m3u8';
+        video.addEventListener('loadedmetadata', () => video.play());
+      }
+    }
+
+    async function setupNotifications() {
+      const btn = document.getElementById('subscribeBtn');
+      const note = document.getElementById('subscribeNote');
+      if (!btn) return;
+
+      // プッシュ通知は HTTPS か localhost でしか使えない（ブラウザの仕様）
+      if (!window.isSecureContext || !('serviceWorker' in navigator) || !('PushManager' in window)) {
+        btn.disabled = true;
+        note.textContent = 'プッシュ通知の登録は HTTPS（または localhost）でアクセスしたときだけ使えます。';
+        return;
+      }
+      try { await navigator.serviceWorker.register('/sw.js'); }
+      catch (e) { console.error('Service Worker 登録失敗:', e); }
+
+      if (Notification.permission === 'granted') btn.style.display = 'none';
+      btn.addEventListener('click', async () => {
+        try {
+          const permission = await Notification.requestPermission();
+          if (permission !== 'granted') return;
+          const reg = await navigator.serviceWorker.ready;
+          const sub = await reg.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: "{{ vapid_public_key }}"
+          });
+          await fetch('/subscribe', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sub)
+          });
+          alert('通知を購読しました');
+          btn.style.display = 'none';
+        } catch (e) {
+          console.error(e);
+          alert('通知の登録に失敗しました: ' + e.message);
+        }
+      });
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      loadLiveStream();
+      setupNotifications();
+    });
+  </script>
+{% endblock %}
